@@ -13,13 +13,15 @@ event management.
 import math
 import random
 from dataclasses import dataclass
-from typing import List, Any
+from typing import List, Any, Tuple
 
 import click
 import pygame as pg
 
 # constants
 from pygame.examples import stars
+
+from utils import CircQueue
 
 
 @dataclass
@@ -156,7 +158,7 @@ def move_stars(stars, ctx: Context) -> List[Position]:
                 if not 0 <= star.position.y <= WINSIZE.y:
                     star.velocity.y = - star.velocity.y
         else:
-            star.velocity.increase(Vect(vrand(rand_ratio), vrand(rand_ratio)))
+            star.velocity.increase(Vect(vrand(rand_ratio), 0.002 - vrand(rand_ratio)))
 
         positions.append(star.position.clone())
     return positions
@@ -180,12 +182,13 @@ def draw_past(screen, index: int, last_positions, past_positions, colors):
     past_positions[index] = last_positions
 
 
+
 @click.command()
 @click.option('--bounce', default=False, type=bool, help='Bounce.')
-@click.option('--number_of_stars', default=1000, type=int, help='Number of stars.')
+@click.option('--number_of_dots', default=1000, type=int, help='Number of stars.')
 @click.option('--rand_ratio', default=0.001, type=float, help='Random ration.')
-@click.option('--x_size', default=300, type=int, help='X windows size.')
-@click.option('--y_size', default=300, type=int, help='Y windows size.')
+@click.option('--x_size', default=800, type=int, help='X windows size.')
+@click.option('--y_size', default=800, type=int, help='Y windows size.')
 def run_my_game(bounce: bool, number_of_stars: int, rand_ratio: float, x_size: int, y_size: int):
     WINSIZE = Position(x=x_size, y=y_size)
     WINCENTER = WINSIZE / 2
@@ -219,24 +222,32 @@ def run_my_game(bounce: bool, number_of_stars: int, rand_ratio: float, x_size: i
     # main game loop
     done = 0
     past_positions = [[], []]
-    past_colors = [grey, dark_grey]
+    past_colors = [(black[0] + i*10, black[1] + i, black[2] + i) for i in reversed(range(10))]
+
+    past_queue = CircQueue()
+
     while not done:
 
         draw_stars(screen, current_positions, black)
+        #draw_stars(screen, current_positions, golden)
+        past_queue.put(current_positions)
         current_positions = move_stars(stars, ctx)
 
-        draw_past(screen, 0, current_positions, past_positions, past_colors)
-#        draw_stars(screen, current_positions, golden)
+#        draw_past(screen, 0, current_positions, past_positions, past_colors)
+        #        draw_stars(screen, current_positions, golden)
 
-#        current_positions = move_stars(stars, ctx)
-#        blacked_it = clone_position(current_positions)
-#        draw_past(screen, 1, current_positions, past_positions, past_colors)
+        #        current_positions = move_stars(stars, ctx)
+        #        blacked_it = clone_position(current_positions)
+        #        draw_past(screen, 1, current_positions, past_positions, past_colors)
         draw_stars(screen, current_positions, white)
+        past_queue.put(current_positions)
 
-#        current_positions = move_stars(stars, ctx)
+#        if past_queue.has_data_for_index(10):
+#            for nb in reversed(range(5)):
+#                draw_stars(screen, past_queue.get_before(nb), past_colors[nb])
+        #        current_positions = move_stars(stars, ctx)
 
-
-#        draw_stars(screen, blacked_it, black)
+        #        draw_stars(screen, blacked_it, black)
         pg.display.update()
         for e in pg.event.get():
             if e.type == pg.QUIT or (e.type == pg.KEYUP and e.key == pg.K_ESCAPE):
@@ -244,8 +255,8 @@ def run_my_game(bounce: bool, number_of_stars: int, rand_ratio: float, x_size: i
                 break
             elif e.type == pg.MOUSEBUTTONDOWN and e.button == 1:
                 WINCENTER.x, WINCENTER.y = list(e.pos)
-                golden = (golden[0] + 5, golden[1] + 5, golden[2] + 5)
-        clock.tick(50)
+                #golden = (golden[0] + 5, golden[1] + 5, golden[2] + 5)
+        clock.tick(100)
 
 
 if __name__ == "__main__":
