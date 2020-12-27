@@ -220,7 +220,6 @@ def run_main(bounce: bool, number_of_dots: int, rand_ratio: float, x_size: int, 
         if not halt:
             draw_dots(screen, universe.positions, ctx, black)
             move(universe, ctx)
-            draw_dots(screen, universe.positions, ctx, white)
             past[i_past_put, :] = universe.positions
             i_past_put = 0 if i_past_put >= i_past_1dim else i_past_put + 1
             if not start_draw_past:
