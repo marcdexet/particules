@@ -1,7 +1,9 @@
 from dataclasses import dataclass
+from typing import Union
+
+import click
 import numpy as np
 import pygame as pg
-import click
 
 
 @dataclass
@@ -29,9 +31,9 @@ class Context:
     bounce: bool
     rand_ratio: float
     gravity: float
-    speed_initial_value: float = 5
-    reset_speed = None
-    reset_position = None
+    speed_initial_value: float
+    radius: int
+    spring: float
 
 
 class Universe:
@@ -42,121 +44,139 @@ class Universe:
         self.positions = self.dots[:, 0]
         self.speeds = self.dots[:, 1]
 
-    def get_all_positions(self):
-        return
-
 
 def init_speeds(speeds: np.ndarray, ctx: Context):
-    size = len(speeds) if speeds.ndim == 2 else 1
-
-    speed_dist = (np.random.random(size) * 2. - 1.) * np.pi
-    speed_value = (np.cos(speed_dist), np.sin(speed_dist))
-
-    if speeds.ndim == 2:
-        speed_vector = np.vstack(speed_value).T
-    else:
-        speed_vector = speed_value
-
-    speeds[:] = speed_vector
+    size = len(speeds)
+    angle_dist = np.random.normal(0., np.pi, size)
+    scale_dist = np.random.random(size)
+    speed_value = (np.cos(angle_dist), np.sin(angle_dist))
+    speed_vector = np.vstack(speed_value).T
+    speed_vector *= scale_dist[:, None]
+    speeds[:] = speed_vector * ctx.speed_initial_value
 
 
 def init_positions(positions: np.ndarray, ctx: Context):
     center = ctx.window.center
     size = len(positions)
-    positions[:] = [center.x, center.y] + (np.random.random((size, 2)) - 0.5) * 10
+    positions[:] = np.random.normal((center.x, center.y),
+                                    (10, 10),
+                                    (size, 2))  # [center.x, center.y] + (np.random.random((size, 2)) - 0.5) * 2
 
 
-def init_dots(universe: Universe, ctx: Context):
+def init_universe(universe: Universe, ctx: Context):
     init_positions(universe.positions, ctx)
     init_speeds(universe.speeds, ctx)
 
-def draw_dots(screen: pg.Surface, universe: Universe, ctx: Context, color):
-    for p in universe.positions:
+
+def draw_dots(screen: pg.Surface, positions: Universe, ctx: Context, color):
+    length = ctx.window.size.x
+    high = ctx.window.size.y
+    for p in positions:
+        if p[0] < 1e-20:
+            p[0] = 0
+        elif p[0] > length:
+            p[0] = length - 1
+        if p[1] < 1e-20:
+            p[1] = 0
+        elif p[1] > high:
+            p[1] = high - 1
+
         screen.set_at((int(p[0]), int(p[1])), color)
 
 
-def init_function(ctx: Context):
+def get_new_values_for_outside(radius: int, center, size: int) -> Union[int, np.ndarray]:
+    return np.random.randint(-radius + center, +radius + center, size)
+
+
+def get_mask_for_axe(pos_axe: np.ndarray, max_value: int) -> np.ma.MaskedArray:
+    return np.ma.masked_outside(pos_axe, 0, max_value)
+
+
+def center_position_axe(pos_axe: np.ndarray, mask: np.ma.MaskedArray, radius: int, center: int) -> np.ndarray:
+    size = np.count_nonzero(mask.mask == True)
+    if size:
+        values = get_new_values_for_outside(radius, center, size)
+        pos_axe[mask.mask] = values
+    return mask
+
+
+def compute_distances(p, ref, ctx: Context):
+    a = p[:, 0] - ref[0]
+    b = p[:, 1] - ref[1]
+
+    try:
+        return np.sqrt(np.square(a) + np.square(b))[:, None]
+    except RuntimeWarning as rw:
+        print("RuntimeWarning")
+
+
+def update_speeds(positions, speeds, ctx: Context):
+    forces = np.zeros(speeds.shape)
+    forces += (0., ctx.gravity)
+
+    if ctx.rand_ratio:
+        nb_vectors = speeds.shape[0]
+        alteration = (1 - 2 * np.random.random(2 * nb_vectors).reshape(nb_vectors, 2))
+        forces[:] += ctx.rand_ratio * alteration
+
+    distances = compute_distances(positions, (ctx.window.center.x, ctx.window.center.y), ctx)
+    springs = (positions - (ctx.window.center.x, ctx.window.center.y)) * distances * ctx.spring
+    speeds[:] += forces
+    speeds[:] -= springs
+
+
+def move(universe: Universe, ctx: Context):
     length = ctx.window.size.x
     high = ctx.window.size.y
     center = ctx.window.center
 
-    X_CHANGE = np.array([-1, 1])
-    Y_CHANGE = np.array([1, -1])
+    positions = universe.positions
+    speeds = universe.speeds
+    positions[:] += speeds
 
-    if ctx.bounce :
-        def fn(speed, axes):
-            speed[:] *= axes
+    mask_x: np.ma.MaskedArray = get_mask_for_axe(positions[:, 0], length)
+    mask_y: np.ma.MaskedArray = get_mask_for_axe(positions[:, 1], high)
 
-        def gn(coord):
-            changed = False
-            matrix = np.array([1, 1])
-
-            if not 0 < coord[0] < length:
-                matrix *= X_CHANGE
-                changed = True
-            if not 0 < coord[1] < high:
-                matrix *= Y_CHANGE
-                changed = True
-            return changed, matrix
-
-        ctx.reset_speed = fn
-        ctx.reset_position = gn
-
+    if ctx.bounce:
+        speeds[:, 0][mask_x.mask] *= -1
+        speeds[:, 1][mask_y.mask] *= -1
     else:
-        def fn(speed, axes):
-            init_speeds(speed, ctx)
+        if np.any(mask_y.mask) or np.any(mask_x.mask):
+            selection = positions[mask_x.mask | mask_y.mask]
+            size = selection.shape[0]
+            new_pos = np.vstack(
+                (get_new_values_for_outside(10, center.x, size), get_new_values_for_outside(10, center.y, size))).T
+            positions[mask_x.mask | mask_y.mask] = new_pos
 
-        def gn(coord):
-            changed = False
-            matrix = np.array([0, 0])
+            # center_position_axe(positions[:, 0], mask_x, radius, center.x)
+            # center_position_axe(positions[:, 1], mask_y, radius, center.y)
+            speed_selection = speeds[mask_x.mask | mask_y.mask]
+            init_speeds(speed_selection, ctx=ctx)
+            speeds[mask_x.mask | mask_y.mask] = speed_selection
 
-            if not 0 < coord[0] < length:
-                coord[0] = center.x + np.random.random(1)
-                matrix += Y_CHANGE
-                changed = True
-            if not 0 < coord[1] < high:
-                coord[1] = center.y + np.random.random(1)
-                matrix += Y_CHANGE
-                changed = True
-
-            return changed, matrix
-
-        ctx.reset_speed = fn
-        ctx.reset_position = gn
-
-
-
-def move(universe: Universe, ctx: Context):
-
-    for dot in universe.dots:
-        coord = dot[0]
-        speed = dot[1]
-
-        coord[:] += speed
-        changed, matrix = ctx.reset_position(coord)
-
-        if changed:
-            coord[:] -= speed
-            ctx.reset_speed(speed, matrix)
-            coord[:] += speed
-        else:
-            speed[:] += ctx.rand_ratio * (1 - 2 * np.random.random(2) )
-            speed[:] += (0., ctx.gravity)
+    update_speeds(positions, speeds, ctx)
 
 
 @click.command()
-@click.option('--bounce', default=False, type=bool, help='Bounce.')
-@click.option('--number_of_dots', default=1000, type=int, help='Number of stars.')
-@click.option('--rand_ratio', default=0.001, type=float, help='Random ration.')
-@click.option('--x_size', default=800, type=int, help='X windows size.')
-@click.option('--y_size', default=800, type=int, help='Y windows size.')
-@click.option('--speed_initial_value', default=5, type=float, help='Initial speed.')
-@click.option('--gravity', default=0, type=float, help='Gravity.')
-@click.option('--y_center', default=None, type=int, help='X center.')
-
+@click.option('-b', '--bounce', is_flag=True, type=bool, help='Bounce.')
+@click.option('-n', '--number_of_dots', default=1000, type=int, help='Number of stars.')
+@click.option('-r', '--rand_ratio', default=0.001, type=float, help='Random ration.')
+@click.option('-xs', '--x_size', default=800, type=int, help='X windows size.')
+@click.option('-ys', '--y_size', default=800, type=int, help='Y windows size.')
+@click.option('-s', '--speed_initial_value', default=5, type=float, help='Initial speed.')
+@click.option('-g', '--gravity', default=0, type=float, help='Gravity.')
+@click.option('-yc', '--y_center', default=None, type=int, help='X center.')
+@click.option('-d', '--radius', default=5, type=int, help='Radius used for particle settings')
+@click.option('-k', '--spring', default=0.001, type=float, help='Spring ratio')
+@click.option('-t', '--tick', default=20, type=int, help='Clock tick')
+@click.option('-h', '--halt', is_flag=True, help='Halt on startup')
 def run_main(bounce: bool, number_of_dots: int, rand_ratio: float, x_size: int, y_size: int,
              speed_initial_value: float, gravity: float,
-             y_center: int):
+             y_center: int,
+             radius: int,
+             spring: float,
+             tick: int,
+             halt: bool):
     used_y_center = y_size // 2 if y_center is None else y_center
     window = Window(Position(x_size, y_size), Position(x_size // 2, used_y_center))
 
@@ -165,13 +185,15 @@ def run_main(bounce: bool, number_of_dots: int, rand_ratio: float, x_size: int, 
                   rand_ratio=rand_ratio,
                   number_of_dots=number_of_dots,
                   speed_initial_value=speed_initial_value,
-                  gravity=gravity)
+                  gravity=gravity,
+                  radius=radius,
+                  spring=spring)
 
-    init_function(ctx)
+    print(ctx)
 
     universe = Universe(ctx)
 
-    init_dots(universe, ctx)
+    init_universe(universe, ctx)
 
     clock = pg.time.Clock()
     pg.init()
@@ -183,24 +205,61 @@ def run_main(bounce: bool, number_of_dots: int, rand_ratio: float, x_size: int, 
     grey = 40, 40, 40
     dark_grey = 30, 30, 40
     screen.fill(black)
+    past = np.zeros((10, ctx.number_of_dots, 2))
+    i_past_1dim = past.shape[0] - 1
+    i_past_put = 0
+    i_past_read_start = i_past_1dim // 2
+    i_past_read = 0
+    start_draw_past = False
+    i_past_black_start = False
+    i_past_black = 0
 
     done = False
-
     while not done:
 
-        draw_dots(screen, universe, ctx, black)
-        move(universe, ctx)
-        draw_dots(screen, universe, ctx, white)
+        if not halt:
+            draw_dots(screen, universe.positions, ctx, black)
+            move(universe, ctx)
+            draw_dots(screen, universe.positions, ctx, white)
+            past[i_past_put, :] = universe.positions
+            i_past_put = 0 if i_past_put >= i_past_1dim else i_past_put + 1
+            if not start_draw_past:
+                if i_past_put > i_past_read_start:
+                    start_draw_past = True
+            if start_draw_past:
+                draw_dots(screen, past[i_past_read], ctx, golden)
+                i_past_read = 0 if i_past_read >= i_past_1dim else i_past_read + 1
 
-        pg.display.update()
+            if not i_past_black_start and i_past_read > 5:
+                i_past_black_start = True
+
+            if i_past_black_start:
+                i_past_black = i_past_1dim - 5 if i_past_read < 5 else i_past_read - 5
+                draw_dots(screen, past[i_past_black], ctx, black)
+
+            draw_dots(screen, universe.positions, ctx, white)
+            pg.display.update()
+
         for e in pg.event.get():
             if e.type == pg.QUIT or (e.type == pg.KEYUP and e.key == pg.K_ESCAPE):
                 done = 1
                 break
             elif e.type == pg.MOUSEBUTTONDOWN and e.button == 1:
                 window.center.copy(e.pos)
-                # golden = (golden[0] + 5, golden[1] + 5, golden[2] + 5)
-        clock.tick(100)
+            elif e.type == pg.KEYDOWN:
+                if e.key == pg.K_SPACE:
+                    halt = not halt
+                if e.key == pg.K_a:
+                    ctx.spring *= 1.2
+                    print(ctx.spring)
+                elif e.key == pg.K_z:
+                    ctx.spring *= 0.8
+                    print(ctx.spring)
+                elif e.key == pg.K_x:
+                    done = 1
+                    break
+
+        clock.tick(tick)
 
 
 if __name__ == '__main__':
