@@ -26,6 +26,7 @@ class Window:
 
 @dataclass
 class Context:
+
     window: Window
     number_of_dots: int
     bounce: bool
@@ -34,7 +35,7 @@ class Context:
     speed_initial_value: float
     radius: int
     spring: float
-
+    determinist: bool
 
 class Universe:
     def __init__(self, ctx: Context):
@@ -58,7 +59,10 @@ def init_speeds(speeds: np.ndarray, ctx: Context):
 def init_positions(positions: np.ndarray, ctx: Context):
     center = ctx.window.center
     size = len(positions)
-    positions[:] = np.random.normal((center.x, center.y),
+    if ctx.determinist:
+        positions[:] = np.linspace(center.x -10, center.x + 10, 2*ctx.number_of_dots).reshape(ctx.number_of_dots, 2)
+    else:
+        positions[:] = np.random.normal((center.x, center.y),
                                     (10, 10),
                                     (size, 2))  # [center.x, center.y] + (np.random.random((size, 2)) - 0.5) * 2
 
@@ -68,20 +72,12 @@ def init_universe(universe: Universe, ctx: Context):
     init_speeds(universe.speeds, ctx)
 
 
-def draw_dots(screen: pg.Surface, positions: Universe, ctx: Context, color):
+def draw_dots(screen: pg.Surface, positions: np.ndarray, ctx: Context, color):
+    int_positions = positions.astype(int)
     length = ctx.window.size.x
     high = ctx.window.size.y
-    for p in positions:
-        if p[0] < 1e-20:
-            p[0] = 0
-        elif p[0] > length:
-            p[0] = length - 1
-        if p[1] < 1e-20:
-            p[1] = 0
-        elif p[1] > high:
-            p[1] = high - 1
-
-        screen.set_at((int(p[0]), int(p[1])), color)
+    for p in int_positions:
+        screen.set_at((p[0], p[1]), color)
 
 
 def get_new_values_for_outside(radius: int, center, size: int) -> Union[int, np.ndarray]:
@@ -170,13 +166,17 @@ def move(universe: Universe, ctx: Context):
 @click.option('-k', '--spring', default=0.001, type=float, help='Spring ratio')
 @click.option('-t', '--tick', default=20, type=int, help='Clock tick')
 @click.option('-h', '--halt', is_flag=True, help='Halt on startup')
+@click.option('-e', '--determinist', is_flag=True, help='Determinist')
+@click.option('-q', '--queue', default=5, type=int, help='Radius used for particle settings')
 def run_main(bounce: bool, number_of_dots: int, rand_ratio: float, x_size: int, y_size: int,
              speed_initial_value: float, gravity: float,
              y_center: int,
              radius: int,
              spring: float,
              tick: int,
-             halt: bool):
+             halt: bool,
+             determinist: bool,
+             queue: int):
     used_y_center = y_size // 2 if y_center is None else y_center
     window = Window(Position(x_size, y_size), Position(x_size // 2, used_y_center))
 
@@ -187,7 +187,8 @@ def run_main(bounce: bool, number_of_dots: int, rand_ratio: float, x_size: int, 
                   speed_initial_value=speed_initial_value,
                   gravity=gravity,
                   radius=radius,
-                  spring=spring)
+                  spring=spring,
+                  determinist=determinist)
 
     print(ctx)
 
@@ -208,7 +209,7 @@ def run_main(bounce: bool, number_of_dots: int, rand_ratio: float, x_size: int, 
     past = np.zeros((10, ctx.number_of_dots, 2))
     i_past_1dim = past.shape[0] - 1
     i_past_put = 0
-    i_past_read_start = i_past_1dim // 2
+    i_past_read_start = 1
     i_past_read = 0
     start_draw_past = False
     i_past_black_start = False
@@ -220,20 +221,26 @@ def run_main(bounce: bool, number_of_dots: int, rand_ratio: float, x_size: int, 
         if not halt:
             draw_dots(screen, universe.positions, ctx, black)
             move(universe, ctx)
-            past[i_past_put, :] = universe.positions
+            past[i_past_put, :] = universe.positions.astype(int)
+
             i_past_put = 0 if i_past_put >= i_past_1dim else i_past_put + 1
+
             if not start_draw_past:
                 if i_past_put > i_past_read_start:
                     start_draw_past = True
+
             if start_draw_past:
                 draw_dots(screen, past[i_past_read], ctx, golden)
-                i_past_read = 0 if i_past_read >= i_past_1dim else i_past_read + 1
+                i_past_read += 1
+                i_past_read = 0 if i_past_read > i_past_1dim else i_past_read
 
-            if not i_past_black_start and i_past_read > 5:
+            if not i_past_black_start and i_past_read == queue:
                 i_past_black_start = True
 
             if i_past_black_start:
-                i_past_black = i_past_1dim - 5 if i_past_read < 5 else i_past_read - 5
+                i_past_black = i_past_read - queue
+                i_past_black = i_past_read + i_past_1dim + 1 - queue if i_past_black < 0 else i_past_black
+
                 draw_dots(screen, past[i_past_black], ctx, black)
 
             draw_dots(screen, universe.positions, ctx, white)
