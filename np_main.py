@@ -99,11 +99,7 @@ def center_position_axe(pos_axe: np.ndarray, mask: np.ma.MaskedArray, radius: in
 def compute_distances(p, ref, ctx: Context):
     a = p[:, 0] - ref[0]
     b = p[:, 1] - ref[1]
-
-    try:
-        return np.sqrt(np.square(a) + np.square(b))[:, None]
-    except RuntimeWarning as rw:
-        print("RuntimeWarning")
+    return np.sqrt(np.square(a) + np.square(b))[:, None]
 
 
 def update_speeds(positions, speeds, ctx: Context):
