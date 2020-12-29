@@ -26,7 +26,6 @@ class Window:
 
 @dataclass
 class Context:
-
     window: Window
     number_of_dots: int
     bounce: bool
@@ -36,6 +35,7 @@ class Context:
     radius: int
     spring: float
     determinist: bool
+
 
 class Universe:
     def __init__(self, ctx: Context):
@@ -49,7 +49,7 @@ class Universe:
 def init_speeds(speeds: np.ndarray, ctx: Context):
     size = len(speeds)
     angle_dist = np.random.normal(0., np.pi, size)
-    scale_dist = np.random.random(size)
+    scale_dist = np.random.normal(1., 1., size)
     speed_value = (np.cos(angle_dist), np.sin(angle_dist))
     speed_vector = np.vstack(speed_value).T
     speed_vector *= scale_dist[:, None]
@@ -62,9 +62,11 @@ def init_positions(positions: np.ndarray, ctx: Context):
     if ctx.determinist:
         positions[:] = np.linspace(center.x -10, center.x + 10, 2*ctx.number_of_dots).reshape(ctx.number_of_dots, 2)
     else:
-        positions[:] = np.random.normal((center.x, center.y),
-                                    (10, 10),
-                                    (size, 2))  # [center.x, center.y] + (np.random.random((size, 2)) - 0.5) * 2
+        angle_dist = np.random.normal(0., np.pi, size)
+        positions[:] = np.vstack((np.cos(angle_dist) + center.x, np.sin(angle_dist) + center.y)).T
+        #positions[:] = np.random.normal((center.x, center.y),
+        #                            (10, 10),
+        #                            (size, 2))  # [center.x, center.y] + (np.random.random((size, 2)) - 0.5) * 2
 
 
 def init_universe(universe: Universe, ctx: Context):
@@ -81,7 +83,9 @@ def draw_dots(screen: pg.Surface, positions: np.ndarray, ctx: Context, color):
 
 
 def get_new_values_for_outside(radius: int, center, size: int) -> Union[int, np.ndarray]:
-    return np.random.randint(-radius + center, +radius + center, size)
+    angle_dist = np.random.normal(0., np.pi, size)
+    return np.cos(angle_dist) * radius + center
+    #return np.random.randint(-radius + center, +radius + center, size)
 
 
 def get_mask_for_axe(pos_axe: np.ndarray, max_value: int) -> np.ma.MaskedArray:
@@ -140,8 +144,6 @@ def move(universe: Universe, ctx: Context):
                 (get_new_values_for_outside(10, center.x, size), get_new_values_for_outside(10, center.y, size))).T
             positions[mask_x.mask | mask_y.mask] = new_pos
 
-            # center_position_axe(positions[:, 0], mask_x, radius, center.x)
-            # center_position_axe(positions[:, 1], mask_y, radius, center.y)
             speed_selection = speeds[mask_x.mask | mask_y.mask]
             init_speeds(speed_selection, ctx=ctx)
             speeds[mask_x.mask | mask_y.mask] = speed_selection
@@ -210,13 +212,18 @@ def run_main(bounce: bool, number_of_dots: int, rand_ratio: float, x_size: int, 
     start_draw_past = False
     i_past_black_start = False
     i_past_black = 0
-
+    follow = False
     done = False
+
     while not done:
 
         if not halt:
+
+
+
             draw_dots(screen, universe.positions, ctx, black)
             move(universe, ctx)
+
             past[i_past_put, :] = universe.positions.astype(int)
 
             i_past_put = 0 if i_past_put >= i_past_1dim else i_past_put + 1
@@ -224,9 +231,8 @@ def run_main(bounce: bool, number_of_dots: int, rand_ratio: float, x_size: int, 
             if not start_draw_past:
                 if i_past_put > i_past_read_start:
                     start_draw_past = True
-
-            if start_draw_past:
-                draw_dots(screen, past[i_past_read], ctx, golden)
+            else:
+                draw_dots(screen, past[i_past_read], ctx, red)
                 i_past_read += 1
                 i_past_read = 0 if i_past_read > i_past_1dim else i_past_read
 
@@ -240,6 +246,7 @@ def run_main(bounce: bool, number_of_dots: int, rand_ratio: float, x_size: int, 
                 draw_dots(screen, past[i_past_black], ctx, black)
 
             draw_dots(screen, universe.positions, ctx, white)
+
             pg.display.update()
 
         for e in pg.event.get():
@@ -247,6 +254,8 @@ def run_main(bounce: bool, number_of_dots: int, rand_ratio: float, x_size: int, 
                 done = 1
                 break
             elif e.type == pg.MOUSEBUTTONDOWN and e.button == 1:
+                window.center.copy(e.pos)
+            elif follow and e.type == pg.MOUSEMOTION:
                 window.center.copy(e.pos)
             elif e.type == pg.KEYDOWN:
                 if e.key == pg.K_SPACE:
@@ -257,7 +266,10 @@ def run_main(bounce: bool, number_of_dots: int, rand_ratio: float, x_size: int, 
                 elif e.key == pg.K_z:
                     ctx.spring *= 0.8
                     print(ctx.spring)
-                elif e.key == pg.K_x:
+                elif e.key == pg.K_f:
+                    follow = not follow
+                elif e.key == pg.K_q:
+                    print("Bye !")
                     done = 1
                     break
 
